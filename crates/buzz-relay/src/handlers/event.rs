@@ -1081,14 +1081,16 @@ async fn set_agent_presence(
     let key = |agent: &PublicKey| (community, agent.to_bytes().to_vec(), owner_bytes.clone());
     // An owner link never changes once made, so a cached `true` is final. A
     // missing one may just not be made yet (an agent that has not signed in),
-    // so only `true` is cached here and the rest are asked again, in one query.
+    // so only `true` is cached here and the rest are asked again, in one query
+    // bounded by the event's own agents.
     let (mut owned, unknown): (Vec<_>, Vec<_>) = agents
         .into_iter()
         .partition(|agent| state.observer_owner_cache.get(&key(agent)) == Some(true));
     if !unknown.is_empty() {
+        let candidates: Vec<Vec<u8>> = unknown.iter().map(|a| a.to_bytes().to_vec()).collect();
         let linked = state
             .db
-            .list_agents_for_owner(community, &owner_bytes)
+            .owned_agents_among(community, &owner_bytes, &candidates)
             .await
             .map_err(|e| {
                 warn!(event_id = %event.id.to_hex(), "agent presence owner lookup failed: {e}");

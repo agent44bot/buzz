@@ -59,7 +59,7 @@ pub async fn clear_presence(
 }
 
 /// Sets one status for every pubkey in `pubkeys`, each with the
-/// [`PRESENCE_TTL_SECS`] TTL, in one round trip.
+/// [`PRESENCE_TTL_SECS`] TTL, in one atomic round trip.
 pub async fn set_presence_many(
     pool: &Pool,
     ctx: &TenantContext,
@@ -71,6 +71,7 @@ pub async fn set_presence_many(
     }
     let mut conn = pool.get().await?;
     let mut pipe = redis::pipe();
+    pipe.atomic();
     for pubkey in pubkeys {
         pipe.cmd("SET")
             .arg(presence_key(ctx, pubkey))
