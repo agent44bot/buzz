@@ -177,43 +177,16 @@ pub async fn claim_relay_membership(
     role: &str,
     policy_version: Option<&str>,
 ) -> Result<bool> {
-    let connection =
-        observability::acquire_writer(pool, observability::WriterOperation::Authorization).await?;
-    let mut tx = sqlx::Transaction::begin(connection, None).await?;
-    crate::deletion::DeletionStore::new(pool.clone())
-        .guard_transaction(&mut tx, community)
-        .await?;
-    super::relay_invite::lock_admission(&mut tx, community).await?;
-    if super::relay_invite::principal_restricted(&mut tx, community, pubkey).await? {
-        return Err(DbError::InviteRestricted);
-    }
-    let inserted = sqlx::query(
-        "INSERT INTO relay_members (community_id, pubkey, role, added_by) \
-         VALUES ($1, $2, $3, 'invite') \
-         ON CONFLICT (community_id, pubkey) DO NOTHING",
+    Ok(super::relay_invite::claim_relay_membership_with_owner(
+        pool,
+        community,
+        pubkey,
+        role,
+        policy_version,
+        None,
     )
-    .bind(community.as_uuid())
-    .bind(pubkey)
-    .bind(role)
-    .execute(&mut *tx)
     .await?
-    .rows_affected()
-        > 0;
-
-    if let Some(version) = policy_version {
-        sqlx::query(
-            "INSERT INTO join_policy_acceptances (community_id, pubkey, policy_version) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-        )
-        .bind(community.as_uuid())
-        .bind(pubkey)
-        .bind(version)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    tx.commit().await?;
-    Ok(inserted)
+    .inserted)
 }
 
 /// Returns whether a member has persisted acceptance evidence for a policy version.
@@ -948,6 +921,27 @@ impl Db {
         policy_version: Option<&str>,
     ) -> Result<bool> {
         claim_relay_membership(&self.pool, community, pubkey, role, policy_version).await
+    }
+
+    /// Claim legacy membership and verified ownership in one admission transaction.
+    #[datastore_span(name = "claim_relay_membership_with_owner", system = "postgresql")]
+    pub async fn claim_relay_membership_with_owner(
+        &self,
+        community: CommunityId,
+        pubkey: &str,
+        role: &str,
+        policy_version: Option<&str>,
+        verified_owner: Option<&str>,
+    ) -> Result<super::relay_invite::MembershipClaimResult> {
+        super::relay_invite::claim_relay_membership_with_owner(
+            &self.pool,
+            community,
+            pubkey,
+            role,
+            policy_version,
+            verified_owner,
+        )
+        .await
     }
 
     /// Returns whether a member has persisted acceptance evidence for a policy version.
